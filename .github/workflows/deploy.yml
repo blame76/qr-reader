@@ -1,0 +1,78 @@
+name: Deploy qr-reader
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    environment: qr-reader-production
+
+    env:
+      SFTP_HOST: ${{ vars.QR_READER_SFTP_HOST }}
+      SFTP_PORT: ${{ vars.QR_READER_SFTP_PORT }}
+      SFTP_USER: ${{ vars.QR_READER_SFTP_USER }}
+      SFTP_PATH: ${{ vars.QR_READER_SFTP_PATH }}
+      SFTP_PRIVATE_KEY: ${{ secrets.QR_READER_SFTP_PRIVATE_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "$SFTP_PRIVATE_KEY" > ~/.ssh/qr-reader
+          chmod 600 ~/.ssh/qr-reader
+
+          ssh-keyscan \
+            -p "$SFTP_PORT" \
+            -H "$SFTP_HOST" \
+            >> ~/.ssh/known_hosts
+
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Test SFTP connection
+        run: |
+          printf 'pwd\nquit\n' | sftp \
+            -i ~/.ssh/qr-reader \
+            -P "$SFTP_PORT" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o UpdateHostKeys=no \
+            "$SFTP_USER@$SFTP_HOST"
+
+      - name: Prepare deployment
+        run: |
+          rm -rf /tmp/qr-reader-deploy
+          mkdir -p /tmp/qr-reader-deploy/assets
+
+          cp index.html /tmp/qr-reader-deploy/
+          cp selfcheck.html /tmp/qr-reader-deploy/
+          cp datenschutz.html /tmp/qr-reader-deploy/
+          cp impressum.html /tmp/qr-reader-deploy/
+          cp .htaccess /tmp/qr-reader-deploy/
+          cp -R assets/. /tmp/qr-reader-deploy/assets/
+
+      - name: Deploy via SFTP
+        run: |
+          sftp \
+            -i ~/.ssh/qr-reader \
+            -P "$SFTP_PORT" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o UpdateHostKeys=no \
+            "$SFTP_USER@$SFTP_HOST" <<EOF
+          cd $SFTP_PATH
+          put -r /tmp/qr-reader-deploy/*
+          put /tmp/qr-reader-deploy/.htaccess .htaccess
+          quit
+          EOF
